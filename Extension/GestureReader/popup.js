@@ -1,31 +1,79 @@
-const enablebox = document.getElementById("enable");
+document.addEventListener("DOMContentLoaded", async () => {
+    const enableCameraBox = document.getElementById("enableCamera");
+    const enableGesturesBtn = document.getElementById("gesturesBtn");
 
-// 1️⃣ On popup load, fetch server state
-async function loadState() {
+    // --- Load initial state from Flask ---
+    await refreshStatus();
+
+    // --- Camera checkbox ---
+    enableCameraBox.addEventListener("change", async () => {
+        const enabled = enableCameraBox.checked;
+        try {
+            await fetch("http://127.0.0.1:5000/toggle", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled })
+            });
+
+            // Send message to background to open/close camera tab
+            chrome.runtime.sendMessage({
+                action: enabled ? "startCamera" : "stopCamera"
+            });
+
+            await refreshStatus();
+        } catch (err) {
+            console.error("Error updating camera toggle:", err);
+        }
+    });
+
+    // --- Gestures toggle button ---
+    enableGesturesBtn.addEventListener("click", async () => {
+        try {
+            const res = await fetch("http://127.0.0.1:5000/status");
+            const data = await res.json();
+            const newState = !data.gestures_enabled;
+
+            await fetch("http://127.0.0.1:5000/toggle_gestures", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled: newState })
+            });
+
+            updateStatusUI({ gestures_enabled: newState });
+        } catch (err) {
+            console.error("Error toggling gestures:", err);
+        }
+    });
+
+    // --- Gesture buttons ---
+    document.querySelectorAll("button[data-cmd]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const cmd = btn.dataset.cmd;
+            chrome.runtime.sendMessage({ action: "simulateCommand", command: cmd });
+        });
+    });
+
+    // --- Poll every 2s to update background color ---
+    setInterval(refreshStatus, 2000);
+});
+
+// --- Helpers ---
+async function refreshStatus() {
     try {
         const res = await fetch("http://127.0.0.1:5000/status");
         const data = await res.json();
-        enablebox.checked = data.camera_enabled;  // set checkbox according to server
-        // Also send message to background to start camera if enabled
-        chrome.runtime.sendMessage({ action: data.camera_enabled ? "startCamera" : "stopCamera" });
+
+        updateStatusUI(data);
+
+        // update camera checkbox
+        const enableCameraBox = document.getElementById("enableCamera");
+        enableCameraBox.checked = data.camera_enabled;
     } catch (err) {
-        console.error("Error fetching server state:", err);
+        console.error("Error fetching status:", err);
+        document.body.style.backgroundColor = "gray";
     }
 }
 
-loadState();
-
-// 2️⃣ When checkbox changes, update server and background script
-enablebox.addEventListener("change", async function() {
-    const enabled = enablebox.checked;
-
-    // Update server
-    await fetch("http://127.0.0.1:5000/toggle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled })
-    });
-
-    // Notify background script
-    chrome.runtime.sendMessage({ action: enabled ? "startCamera" : "stopCamera" });
-});
+function updateStatusUI(data) {
+    document.body.style.backgroundColor = data.gestures_enabled ? "green" : "red";
+}
