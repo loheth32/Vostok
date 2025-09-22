@@ -12,8 +12,13 @@ app = Flask(__name__)
 CORS(app)
 
 # ---- Load Model ----
-with open("gesture_model.pkl", "rb") as f:
-    model = pickle.load(f)
+try:
+    with open("gesture_model.pkl", "rb") as f:
+        model = pickle.load(f)
+except FileNotFoundError:
+    print("ERROR: gesture_model2.pkl not found. Please train the model first.")
+    exit()
+
 
 # ---- Mediapipe Hands ----
 mp_hands = mp.solutions.hands
@@ -26,29 +31,42 @@ gestures_enabled = True
 # ---- Preprocessing Function (must match training) ----
 def preprocess_landmarks(landmark_list):
     temp_landmark_list = copy.deepcopy(landmark_list)
-
-    # Convert to relative coordinates
     base_x, base_y = temp_landmark_list[0][0], temp_landmark_list[0][1]
     for i in range(len(temp_landmark_list)):
         temp_landmark_list[i][0] -= base_x
         temp_landmark_list[i][1] -= base_y
-
-    # Flatten
     temp_landmark_list = list(itertools.chain.from_iterable(temp_landmark_list))
-
-    # Normalize
     max_value = max(list(map(abs, temp_landmark_list)))
     if max_value > 0:
         temp_landmark_list = [n / max_value for n in temp_landmark_list]
     return temp_landmark_list
 
-# ---- API ----
+# ---- API Endpoints ----
 @app.route('/toggle', methods=['POST'])
 def toggle_camera():
     global camera_enabled
     data = request.get_json()
     camera_enabled = data.get("enabled", False)
     return jsonify({"success": True, "camera_enabled": camera_enabled})
+
+@app.route('/toggle_gestures', methods=['POST'])
+def toggle_gestures():
+    global gestures_enabled
+    # This logic allows the peace sign to re-activate the system
+    data = request.get_json()
+    prediction = data.get("prediction", "") if data else ""
+    
+    if not gestures_enabled and prediction == "peace_sign":
+        gestures_enabled = True
+    elif gestures_enabled and prediction == "peace_sign":
+        gestures_enabled = False
+    # This part handles the button click from the popup
+    elif not data: 
+        gestures_enabled = not gestures_enabled
+        
+    print(f"Gestures Toggled. New state: {gestures_enabled}")
+    return jsonify({"success": True, "gestures_enabled": gestures_enabled})
+
 
 @app.route('/status', methods=['GET'])
 def status():
@@ -57,6 +75,7 @@ def status():
         "gestures_enabled": gestures_enabled
     })
 
+
 @app.route('/frame', methods=['POST'])
 def frame():
     data = request.get_json()
@@ -64,27 +83,32 @@ def frame():
     if not image_data.startswith("data:image/jpeg;base64,"):
         return jsonify({"success": False, "error": "Invalid image"}), 400
 
-    # Decode base64 → OpenCV image
     img_bytes = base64.b64decode(image_data.split(",")[1])
     np_arr = np.frombuffer(img_bytes, np.uint8)
     frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    frame = cv2.flip(frame, 1) # Mirror the image
 
-    # Run Mediapipe Hand Detection
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb)
 
     if results.multi_hand_landmarks:
-        # Use first detected hand
         hand_landmarks = results.multi_hand_landmarks[0]
         landmark_list = [[lm.x, lm.y] for lm in hand_landmarks.landmark]
-
         features = preprocess_landmarks(landmark_list)
-        prediction = model.predict([features])[0]  # string label
+        
+        # Use the simple model.predict()
+        prediction = model.predict([features])[0]
+        
+        # Only process the peace sign if gestures are disabled
+        if not gestures_enabled and prediction != 'peace_sign':
+            return jsonify({"success": False, "command": "gestures_disabled"})
 
-        print("Predicted gesture:", prediction)
+        print(f"Prediction: {prediction}")
+        # Send back the simple prediction
         return jsonify({"success": True, "command": prediction})
 
     return jsonify({"success": False, "command": "no_hand"})
 
 if __name__ == "__main__":
     app.run(debug=True)
+
