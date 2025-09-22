@@ -12,7 +12,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ---- Load Model ----
-with open("gesture_model2.pkl", "rb") as f:
+with open("gesture_model.pkl", "rb") as f:
     model = pickle.load(f)
 
 # ---- Mediapipe Hands ----

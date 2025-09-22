@@ -6,7 +6,7 @@ import copy
 import itertools
 
 # --- 1. LOAD THE TRAINED MODEL ---
-model_filename = 'gesture_model2.pkl'
+model_filename = 'gesture_model.pkl'
 print(f"Loading model from {model_filename}...")
 with open(model_filename, 'rb') as f:
     model = pickle.load(f)

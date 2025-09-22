@@ -42,7 +42,7 @@ print(classification_report(y_test, y_pred))
 
 # --- 4. SAVE THE TRAINED MODEL ---
 # This saves your trained model so your main application can use it.
-model_filename = 'gesture_model2.pkl'
+model_filename = 'gesture_model.pkl'
 with open(model_filename, 'wb') as f:
     pickle.dump(model, f)
 

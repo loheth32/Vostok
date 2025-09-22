@@ -13,28 +13,38 @@
         setInterval(async () => {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg"));
-            const arrayBuffer = await blob.arrayBuffer();
-            const base64 = btoa(
-                new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-            );
+            
+            // --- NEW: Convert blob to base64 using FileReader for better performance ---
+            const reader = new FileReader();
+            reader.readAsDataURL(blob);
+            reader.onloadend = async () => {
+                const base64data = reader.result;
 
-            // Send frame to Flask
-            await fetch("http://127.0.0.1:5000/frame", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ image: `data:image/jpeg;base64,${base64}` })
-            });
-        }, 200);
+                try {
+                    // Send frame to Flask and wait for the response
+                    const response = await fetch("http://127.0.0.1:5000/frame", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ image: base64data })
+                    });
+
+                    const result = await response.json();
+
+                    // --- NEW: Check the response and send it to the background script ---
+                    if (result.success && result.command !== "no_hand") {
+                        // Forward the prediction to background.js
+                        chrome.runtime.sendMessage({
+                            action: "gesturePrediction",
+                            gesture: result.command
+                        });
+                    }
+                } catch (error) {
+                    console.error("Error sending frame or receiving prediction:", error);
+                }
+            };
+        }, 200); // You can adjust this interval for performance
 
     } catch (err) {
         console.error("Camera error:", err);
     }
-
-    // Optional: stop camera on message from background
-    chrome.runtime.onMessage.addListener(msg => {
-        if (msg.action === "stopCamera") {
-            stream.getTracks().forEach(track => track.stop());
-            console.log("Camera stopped");
-        }
-    });
 })();

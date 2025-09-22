@@ -1,76 +1,86 @@
 let cameraTabId = null;  // track the camera tab
-let gesturesEnabled = false; // track gestures flag from server
 
-// --- Gesture to Browser Command Mapping ---
+// --- 1. YOUR FINALIZED GESTURE MAP ---
 const gestureMap = {
-    "open_palm": "scrollDown",
-    "fist": "scrollUp",
-    "thumbs_up": "nextTab",
-    "thumbs_down": "prevTab",
-    "ok_sign": "voiceSearch",
-    "peace_sign": "openTab",
-    "call_me": "closeTab",
-    "three_fingers_up": "pausePlay",
-    "bull_sign": "toggleGestures"
+    "open_palm": "pausePlay",
+    "thumbs_up": "scrollUp",
+    "pointing_right": "nextTab",
+    "pointing_left": "prevTab",
+    "fist": "voiceSearch",
+    "l_shape": "openTab",
+    "ok_sign": "closeTab",
+    "thumbs_down": "scrollDown",
+    "peace_sign": "toggleGestures"
 };
+
+// --- 2. CONFIGURABLE DELAYS (in milliseconds) ---
+// Here you can tune the "cooldown" for each command.
+const commandCooldowns = {
+    pausePlay: 1000,       // 1 second cooldown
+    scrollUp: 300,         // Can scroll every 300ms
+    scrollDown: 300,       // Can scroll every 300ms
+    nextTab: 500,          // Half a second cooldown
+    prevTab: 500,          // Half a second cooldown
+    voiceSearch: 2000,     // 2 second cooldown to prevent accidental activation
+    openTab: 1000,
+    closeTab: 1000,
+    toggleGestures: 500
+};
+
+// This object will store the last time a command was executed
+let lastExecutionTimes = {};
+
 
 // --- Listen for messages from popup.js or cam.js ---
 chrome.runtime.onMessage.addListener((msg) => {
     if (!msg.action) return;
 
-    console.log("[Background] Received action:", msg.action, msg);
-
     switch (msg.action) {
         case "startCamera":
-            if (cameraTabId) {
-                console.warn("[Background] Camera already open:", cameraTabId);
-                return;
-            }
+            if (cameraTabId) return;
             chrome.tabs.create({ url: chrome.runtime.getURL("cam.html") }, (tab) => {
                 cameraTabId = tab.id;
-                console.log("[Background] Camera tab opened:", cameraTabId);
             });
             break;
 
         case "stopCamera":
             if (cameraTabId) {
                 chrome.tabs.remove(cameraTabId);
-                console.log("[Background] Camera tab closed:", cameraTabId);
                 cameraTabId = null;
             }
             break;
-
-        case "simulateCommand": // from popup
-            handleCommand(msg.command);
-            break;
-
+        
         case "gesturePrediction": // from cam.js (ML model)
-            console.log("[Background] Gesture prediction:", msg.gesture);
             if (msg.gesture in gestureMap) {
                 const mappedCmd = gestureMap[msg.gesture];
-                console.log(`[Background] Mapping gesture '${msg.gesture}' → command '${mappedCmd}'`);
                 handleCommand(mappedCmd);
-            } else {
-                console.warn("[Background] No mapping found for gesture:", msg.gesture);
             }
             break;
-
-        default:
-            console.warn("[Background] Unknown action:", msg.action);
     }
 });
 
-// --- Handle Commands ---
+// --- Handle Commands with Cooldown Logic ---
 function handleCommand(cmd) {
-    console.log("[Background] Handling command:", cmd);
+    // --- 3. THE COOLDOWN LOGIC ---
+    const now = Date.now();
+    const cooldown = commandCooldowns[cmd] || 200; // Default cooldown of 200ms if not specified
+    const lastExecution = lastExecutionTimes[cmd] || 0;
 
+    if (now - lastExecution < cooldown) {
+        console.log(`[Background] Command '${cmd}' is on cooldown. Ignoring.`);
+        return; // Stop if the command was executed too recently
+    }
+    
+    // If not on cooldown, execute the command and update the timestamp
+    lastExecutionTimes[cmd] = now;
+    console.log(`[Background] Executing command: ${cmd}`);
+
+
+    // --- The rest of your command handling logic ---
     fetch("http://127.0.0.1:5000/status")
         .then(res => res.json())
         .then(data => {
-            gesturesEnabled = data.gestures_enabled;
-            console.log("[Background] Gestures enabled?", gesturesEnabled);
-
-            if (!gesturesEnabled && cmd !== "toggleGestures") {
+            if (!data.gestures_enabled && cmd !== "toggleGestures") {
                 console.warn("[Background] Gestures disabled. Ignoring:", cmd);
                 return;
             }
@@ -104,43 +114,32 @@ function handleCommand(cmd) {
                         break;
 
                     case "scrollUp":
-                        executeInTab(tabId, () => window.scrollBy(0, -300));
+                        executeInTab(tabId, () => window.scrollBy(0, -500));
                         break;
 
                     case "scrollDown":
-                        executeInTab(tabId, () => window.scrollBy(0, 300));
+                        executeInTab(tabId, () => window.scrollBy(0, 500));
                         break;
 
                     case "voiceSearch":
                         executeInTab(tabId, () => {
                             if (!window.location.hostname.includes("google.")) return;
-                            const micBtn = document.querySelector('button[aria-label="Search by voice"]') ||
-                                           document.querySelector('div[aria-label="Search by voice"]') ||
-                                           document.querySelector('[aria-label*="voice"]');
-                            if (micBtn) {
-                                micBtn.style.outline = "3px solid red";
-                                setTimeout(() => {
-                                    micBtn.style.outline = "";
-                                    micBtn.click();
-                                }, 1000);
-                            }
+                            const micBtn = document.querySelector('div[aria-label="Search by voice"]');
+                            if (micBtn) micBtn.click();
                         });
                         break;
-
+                    
                     case "toggleGestures":
-                        gesturesEnabled = !gesturesEnabled;
-                        console.log("[Background] Gestures toggled:", gesturesEnabled);
+                         // This command toggles the state on the server
+                        fetch("http://127.0.0.1:5000/toggle_gestures", { method: "POST" });
                         break;
-
-                    default:
-                        console.warn("[Background] Unknown command:", cmd);
                 }
             });
         })
-        .catch(err => console.error("[Background] Error fetching gesturesEnabled:", err));
+        .catch(err => console.error("[Background] Error fetching status:", err));
 }
 
-// --- Tab switching helper ---
+// --- Helper Functions ---
 function switchTab(currentTabId, offset) {
     chrome.tabs.query({ currentWindow: true }, (tabs) => {
         const idx = tabs.findIndex(t => t.id === currentTabId);
@@ -150,7 +149,6 @@ function switchTab(currentTabId, offset) {
     });
 }
 
-// --- Inject code into a tab ---
 function executeInTab(tabId, func) {
     chrome.scripting.executeScript({
         target: { tabId },
